@@ -1,0 +1,6 @@
+@BetFlag.BackEnd.Scommesse_HostAddress = http://localhost:5296
+
+GET {{BetFlag.BackEnd.Scommesse_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

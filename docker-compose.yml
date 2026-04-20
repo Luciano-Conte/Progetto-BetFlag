@@ -1,0 +1,53 @@
+services:
+  # --- DATABASE SQL SERVER ---
+  db-sql:
+    image: mcr.microsoft.com/mssql/server:2022-latest # Scarica SQL Server già pronto
+    environment:
+      - ACCEPT_EULA=Y             # Accetti i termini di licenza Microsoft
+      - MSSQL_SA_PASSWORD=YourStrong@Passw0rd # Password dell'amministratore (SA)
+    ports:
+      - "1433:1433"               # Mappa la porta del PC alla porta del container
+
+  # --- CACHE REDIS ---
+  cache-redis:
+    image: redis:alpine           # Usa una versione di Redis leggerissima (Alpine)
+    ports:
+      - "6379:6379"
+
+  # --- MESSAGE BROKER RABBITMQ ---
+  queue-rabbitmq:
+    image: rabbitmq:3-management-alpine # Include il pannello di controllo Web
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 5s
+      timeout: 10s
+      retries: 5
+    ports:
+      - "5672:5672"               # Porta per i messaggi
+      - "15672:15672"             # Porta per la dashboard (user: guest, pass: guest)
+
+  # --- LA MIA API .NET ---
+  bet-api:
+    build:
+      context: .                  # Cerca i file nella cartella corrente
+      dockerfile: BetFlag.BackEnd.Scommesse/Dockerfile # Usa il Dockerfile
+    ports:
+      - "8080:8080"               # Espone la tua API all'esterno
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development # Dire all''API di comportarsi come se fosse in modalità sviluppo
+      - ConnectionStrings__DefaultConnection=Server=db-sql;Database=BetFlagDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=true
+      - Redis__ConnectionString=cache-redis:6379
+      - RabbitMQ__HostName=queue-rabbitmq
+    depends_on:                   # IMPORTANTE: Avvia prima i database, poi l'API
+      - db-sql
+      - cache-redis
+      - queue-rabbitmq
+       
+  # --- IL MICROSERVIZIO CONSUMER ---
+  bet-consumer:
+    build:
+      context: ./BetFlag.BackEnd.Consumer # Guarda dentro la cartella BetFlag.BackEnd.Consumer
+      dockerfile: Dockerfile
+    depends_on:                           # Deve partire DOPO che RabbitMQ è acceso
+      queue-rabbitmq:
+        condition: service_healthy
