@@ -1,0 +1,48 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <title>BetFlag Real-Time Test</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+    <style>
+        body {
+            font-family: Arial;
+            padding: 20px;
+            background: #282a2b;
+            color: #fff;
+        }
+
+        #log {
+            background: #808080;
+            padding: 10px;
+            border-radius: 5px;
+            min-height: 200px;
+        }
+
+        .success {
+            color: #05fa0e;
+        }
+    </style>
+</head>
+<body>
+    <h2>📡 BetFlag Real-Time Terminal</h2>
+    <div id="log">In attesa di connessione...<br></div>
+
+    <script>
+        // 1. Creiamo la connessione verso l'API in Docker
+        // Creiamo la connessione saltando la negoziazione (Bypassa il blocco del browser!)
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl("/bethub")
+            .build();
+
+        // 2. Cosa fare quando l'API ci invia il messaggio "ReceiveBetNotification"?
+        connection.on("ReceiveBetNotification", function (message) {
+            const div = document.getElementById("log");
+            div.innerHTML += `<span class="success">🔔 NOTIFICA RICEVUTA: ${message}</span><br>`;
+        });
+
+        // 3. Avviamo la connessione
+        connection.start().then(() => document.getElementById("log").innerHTML += "🟢 Connesso al server SignalR!<br>")
+            .catch(err => document.getElementById("log").innerHTML += "🔴 Errore: " + err + "<br>");
+    </script>
+</body>
+</html>

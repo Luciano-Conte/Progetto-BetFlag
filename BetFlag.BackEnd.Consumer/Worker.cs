@@ -63,14 +63,44 @@ public class Worker : BackgroundService
         consumer.ReceivedAsync += async (model, ea) =>
         {
             var body = ea.Body.ToArray();
-            var message = Encoding.UTF8.GetString(body);
+            var message = System.Text.Encoding.UTF8.GetString(body);
 
             _logger.LogInformation($"[📥] NUOVA SCOMMESSA RICEVUTA: {message}");
 
             // Simuliamo il tempo necessario per e validare la scommessa..
             await Task.Delay(2000, stoppingToken);
 
-            _logger.LogInformation($"[✅] Scommessa elaborata e registrata nei terminali!\n");
+            _logger.LogInformation($"[✅] Scommessa elaborata!\n");
+
+            // Avvisiamo l'API che abbiamo finito
+            try
+            {
+                using var httpClient = new HttpClient();
+                // Nota: "bet-api" è il nome del container nel docker-compose
+
+                var payload = new { message = $"Scommessa processata per l'utente {ea.RoutingKey}: {message}" };
+
+                // Lo trasformiamo in JSON in modo sicuro
+                var json = System.Text.Json.JsonSerializer.Serialize(payload);
+                var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+                _logger.LogInformation("🚀 Invio notifica all'API...");
+                var response = await httpClient.PostAsync("http://bet-api:8080/api/Notifications/bet-completed", content);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    _logger.LogInformation("✅ Notifica inviata con successo!");
+                }
+                else
+                {
+                    _logger.LogError($"❌ L'API ha risposto con errore: {response.StatusCode}");
+                }
+            }
+            catch (Exception ex)
+            {
+
+                _logger.LogError($"❌ Errore di rete durante l'invio notifica: {ex.Message}");
+            }
         };
 
         // Diciamo al canale di iniziare ad ascoltare usando il nostro consumer
