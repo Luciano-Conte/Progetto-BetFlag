@@ -1,13 +1,13 @@
 # 🚀 BetFlag Microservices Architecture
 
-Questo progetto è una simulazione di un sistema di scommesse distribuito (Backend) costruito con un'architettura a microservizi. Dimostra come gestire operazioni sincrone (API) e asincrone (Background Worker) utilizzando **.NET 10**, **RabbitMQ**, **Redis** e **Docker**.
+Questo progetto è una simulazione di un sistema di scommesse distribuito (Backend) costruito con un'architettura a microservizi. Dimostra come gestire operazioni sincrone (API) e asincrone (Background Worker) utilizzando **.NET 10**, **RabbitMQ**, **Redis**, **Docker** e **SignalR**.
 
 ## 🏗️ Architettura del Sistema
 
 Il sistema è composto da diversi container Docker che comunicano tra loro:
 
-1.  **Bet API (.NET 10):** Espone gli endpoint REST per ricevere le scommesse. Aggiorna immediatamente il saldo dell'utente nel database e invia un messaggio alla coda per l'elaborazione asincrona.
-2.  **Bet Consumer (Background Worker .NET 10):** Resta in ascolto sulla coda RabbitMQ. Appena arriva un messaggio, lo preleva e simula la validazione/registrazione della scommessa nei terminali, senza bloccare l'esperienza dell'utente.
+1.  **Bet API (.NET 10):** Espone gli endpoint REST per ricevere le scommesse. Aggiorna immediatamente il saldo dell'utente nel database e invia un messaggio alla coda per l'elaborazione asincrona. **Include un Hub SignalR per inviare notifiche push ai client.**
+2.  **Bet Consumer (Background Worker .NET 10):** Resta in ascolto sulla coda RabbitMQ. Appena arriva un messaggio, lo preleva e simula la validazione/registrazione della scommessa, notificando l'API al termine del processo.
 3.  **RabbitMQ:** Il Message Broker che gestisce la coda (`bet_queue`) disaccoppiando l'API dal Consumer.
 4.  **SQL Server 2022:** Il database relazionale che memorizza gli utenti e i loro saldi.
 5.  **Redis:** Cache in memoria dove vengono memorizzate e gestite le quote (odds).
@@ -19,6 +19,7 @@ Il sistema è composto da diversi container Docker che comunicano tra loro:
 * RabbitMQ (Message Broker)
 * Docker & Docker Compose
 * Redis OSS
+* SignalR (Real-time WebSockets)
 
 ## ⚙️ Prerequisiti
 
@@ -39,8 +40,12 @@ Per eseguire questo progetto sul tuo computer locale, devi avere installato:
 
 Una volta che i container sono in esecuzione, puoi testare il sistema:
 
-1.  Apri il browser e vai su **Swagger** all'indirizzo: `http://localhost:8080/swagger`
-2.  Effettua una richiesta **POST** per inserire una nuova scommessa con questo payload JSON:
+**1. Apri il Terminale delle Notifiche:**
+   * Vai all'indirizzo: `http://localhost:8080/index.html` (vedrai il messaggio "In attesa di connessione...").
+
+**2. Invia una scommessa tramite Swagger:**
+   * Apri il browser su: `http://localhost:8080/swagger`
+   * Effettua una richiesta **POST** (`/api/Bet`) con questo payload JSON:
     ```json
     {
       "userId": 1,
@@ -50,14 +55,18 @@ Una volta che i container sono in esecuzione, puoi testare il sistema:
       "odds": 2.50
     }
     ```
-3.  Osservando i log nel terminale si vedrà l'API che scala il saldo (`UPDATE [Users] SET [Balance]...`) e il Consumer che riceve ed elabora il messaggio istantaneamente.
+**3. Verifica il Risultato:**
+   * **Nel Terminale Notifiche:** Vedrai apparire istantaneamente il messaggio ✅ "Scommessa processata" non appena il Consumer finisce il lavoro.
+   * **Nei Log Docker:** Vedrai l'API che scala il saldo (`UPDATE [Users] SET [Balance]...`) e il Consumer che preleva il messaggio.
+
 4.  **Spegnimento:**
     * Per fermare i container: `docker-compose down`
     * Per fermare i container e pulire anche i volumi (reset database): `docker-compose down -v`
 
-## 📊 Dashboard Utili
+## 📊 Dashboard e Interfacce
 
-* **RabbitMQ Management UI:** All'indirizzo: `http://localhost:15672` (Credenziali: `guest` / `guest`)
+* **Real-Time Terminal:** `http://localhost:8080/index.html` (Interfaccia SignalR)
+* **RabbitMQ Management UI:** `http://localhost:15672` (Credenziali: `guest` / `guest`)
 * **SQL Server:** Esposto sulla porta `1433` (Credenziali SA configurate nel `docker-compose.yml`).
 
 ---
