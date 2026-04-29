@@ -72,7 +72,7 @@ app.UseStaticFiles();  // Abilita i file nella cartella wwwroot
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHub<BetHub>("/bethub");
+app.MapHub<NotificationHub>("/bethub");
 
 // 4. SEEDING INIZIALE (Database e Cache)
 // Questo blocco crea il database e le tabelle all'avvio dell'app

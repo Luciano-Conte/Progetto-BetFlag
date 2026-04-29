@@ -9,5 +9,6 @@ namespace BetFlag.BackEnd.Scommesse.Data
 
         // Rappresenta la tabella Users nel database
         public DbSet<User> Users { get; set; }
+        public DbSet<Bets> Bets { get; set; }
     }
 }

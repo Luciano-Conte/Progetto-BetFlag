@@ -7,6 +7,7 @@ using RabbitMQ.Client;
 using System.Text;
 using System.Text.Json;
 using System.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace BetFlag.BackEnd.Scommesse.Services
 {
@@ -19,6 +20,14 @@ namespace BetFlag.BackEnd.Scommesse.Services
         {
             _context = context;
             _redis = redis.GetDatabase();
+        }
+
+        public async Task<IEnumerable<Bets>> GetUserBetHistoryAsync(int userId)
+        {
+            return await _context.Bets
+                .Where(b => b.UserId == userId)
+                .OrderByDescending(b => b.CreatedAt)
+                .ToListAsync();
         }
 
         public async Task<bool> PlaceBetAsync(BetRequest request)
@@ -51,7 +60,23 @@ namespace BetFlag.BackEnd.Scommesse.Services
             // --- STEP 3: TRANSAZIONE ---
             // Logica di sottrazione saldo (Transazionale ACID)
             user.Balance -= request.Amount;
-            await _context.SaveChangesAsync(); // Questo comando salva fisicamente su SQL Server
+
+            // Creazione record scomessa
+            var nuovaScommessa = new Bets
+            {
+                UserId = request.UserId,
+                EventId = request.EventId,
+                Sign = request.Sign,
+                Amount = request.Amount,
+                Odds = request.Odds,
+                CreatedAt = DateTime.UtcNow,
+                Status = "Pending" // Inizialmente è in attesa
+            };
+
+            _context.Bets.Add(nuovaScommessa);
+
+            // Questo salva sia il nuovo saldo che la nuova scommessa su SQL Server
+            await _context.SaveChangesAsync();
 
             // --- STEP 4: PUBBLICA IL MESSAGGIO SU RABBITMQ ---
             try
@@ -69,6 +94,7 @@ namespace BetFlag.BackEnd.Scommesse.Services
 
                     // Trasformiamo l'oggetto in JSON e poi in Byte (il formato richiesto da RabbitMQ)
                     var messageJson = JsonSerializer.Serialize(new {
+                        BetId = nuovaScommessa.Id, // passiamo l'ID del DB
                         UserId = request.UserId,
                         EventId = request.EventId,
                         Amount = request.Amount,

@@ -1,6 +1,7 @@
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System.Text;
+using System.Text.Json;
 
 namespace BetFlag.BackEnd.Consumer;
 
@@ -67,10 +68,22 @@ public class Worker : BackgroundService
 
             _logger.LogInformation($"[📥] NUOVA SCOMMESSA RICEVUTA: {message}");
 
-            // Simuliamo il tempo necessario per e validare la scommessa..
-            await Task.Delay(2000, stoppingToken);
+            // Estrazione BetId
+            int betId = 0;
+            try
+            {
+                // Leggiamo l'ID dal JSON che arriva dall'API
+                var data = JsonSerializer.Deserialize<JsonElement>(message);
+                betId = data.GetProperty("BetId").GetInt32();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"❌ Errore durante la lettura del BetId: {ex.Message}");
+            }
 
-            _logger.LogInformation($"[✅] Scommessa elaborata!\n");
+            // Simuliamo il tempo necessario per e validare la scommessa..
+            await Task.Delay(2000, stoppingToken); // 2 secondi
+            _logger.LogInformation($"[✅] Scommessa #{betId} elaborata!\n");
 
             // Avvisiamo l'API che abbiamo finito
             try
@@ -78,18 +91,20 @@ public class Worker : BackgroundService
                 using var httpClient = new HttpClient();
                 // Nota: "bet-api" è il nome del container nel docker-compose
 
-                var payload = new { message = $"Scommessa processata per l'utente {ea.RoutingKey}: {message}" };
+                // Creiamo il payload che l'API si aspetta (BetConfirmRequest)
+                var confirmPayload = new { BetId = betId };
 
                 // Lo trasformiamo in JSON in modo sicuro
-                var json = System.Text.Json.JsonSerializer.Serialize(payload);
+                var json = System.Text.Json.JsonSerializer.Serialize(confirmPayload);
                 var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
 
-                _logger.LogInformation("🚀 Invio notifica all'API...");
-                var response = await httpClient.PostAsync("http://bet-api:8080/api/Notifications/bet-completed", content);
+                _logger.LogInformation($"🚀 Invio conferma per Scommessa #{betId} all'API...");
+
+                var response = await httpClient.PostAsync("http://bet-api:8080/api/bet/confirm", content);
 
                 if (response.IsSuccessStatusCode)
                 {
-                    _logger.LogInformation("✅ Notifica inviata con successo!");
+                    _logger.LogInformation($"✅ Scommessa #{betId} confermata con successo sul DB!");
                 }
                 else
                 {
