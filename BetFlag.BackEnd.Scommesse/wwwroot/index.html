@@ -16,33 +16,115 @@
             padding: 10px;
             border-radius: 5px;
             min-height: 200px;
+            margin-top: 15px;
         }
 
         .success {
             color: #05fa0e;
+            font-weight: bold;
+        }
+
+        input, button {
+            padding: 12px;
+            margin-top: 10px;
+            border-radius: 5px;
+            border: none;
+        }
+
+        input {
+            width: 100%; /* Si adatta allo schermo */
+            max-width: 800px;
+            font-family: monospace; /* Font migliore per i token */
+        }
+
+        button {
+            background: #007bff; /* Blu acceso */
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 16px;
+            width: 150px;
+        }
+
+        button:hover {
+            background: #0056b3; /* Diventa più scuro se si passa sopra il bottone */
         }
     </style>
 </head>
 <body>
     <h2>📡 BetFlag Real-Time Terminal</h2>
-    <div id="log">In attesa di connessione...<br></div>
+
+    <div>
+        <label>Inserisci il tuo Token JWT:</label><br>
+        <input type="text" id="jwtToken" placeholder="Incolla qui il tuo token..." />
+        <br>
+        <button onclick="connettiSignalR()">Connetti</button>
+    </div>
+
+    <div id="log">⌛ In attesa del Token...<br></div>
 
     <script>
-        // 1. Creiamo la connessione verso l'API in Docker
-        // Creiamo la connessione saltando la negoziazione (Bypassa il blocco del browser!)
-        const connection = new signalR.HubConnectionBuilder()
-            .withUrl("/bethub")
-            .build();
+        // Funzione per "aprire" il JWT e leggerne il contenuto in modo sicuro
+        function getNomeDalToken(token) {
+            try {
+                let base64Url = token.split('.')[1];
+                let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                let jsonPayload = decodeURIComponent(atob(base64).split('').map(function (c) {
+                    return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+                }).join(''));
 
-        // 2. Cosa fare quando l'API ci invia il messaggio "ReceiveBetNotification"?
-        connection.on("ReceiveBetNotification", function (message) {
-            const div = document.getElementById("log");
-            div.innerHTML += `<span class="success">🔔 NOTIFICA RICEVUTA: ${message}</span><br>`;
-        });
+                let json = JSON.parse(jsonPayload);
 
-        // 3. Avviamo la connessione
-        connection.start().then(() => document.getElementById("log").innerHTML += "🟢 Connesso al server SignalR!<br>")
-            .catch(err => document.getElementById("log").innerHTML += "🔴 Errore: " + err + "<br>");
+                // .NET salva il nome in un claim specifico, proviamo a trovarlo:
+                return json["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name"]
+                    || json["unique_name"]
+                    || json["name"]
+                    || json["sub"]
+                    || "Utente";
+            } catch (e) {
+                return "Utente"; // Fallback se il token è malformato
+            }
+        }
+
+        function connettiSignalR() {
+            const token = document.getElementById("jwtToken").value.trim();
+            const logDiv = document.getElementById("log");
+
+            if (!token) {
+                logDiv.innerHTML += "🔴 Errore: Inserisci un token prima di connetterti!<br>";
+                return;
+            }
+
+            // Estraiamo il nome dal token prima di connetterci
+            const nomeUtente = getNomeDalToken(token);
+
+            logDiv.innerHTML += "🔄 Tentativo di connessione in corso...<br>";
+
+            // 1. Creiamo la connessione verso l'API in Docker
+            // Creiamo la connessione saltando la negoziazione (Bypassa il blocco del browser!)
+            // PASSIAMO IL TOKEN TRAMITE accessTokenFactory
+            const connection = new signalR.HubConnectionBuilder()
+                .withUrl("http://localhost:8080/bethub", {
+                    accessTokenFactory: () => token
+                })
+                .build();
+
+            // 2. Cosa fare quando l'API ci invia il messaggio "ReceiveBetNotification"?
+            connection.on("ReceiveBetNotification", function (message) {
+                logDiv.innerHTML += `<span class="success">🔔 NOTIFICA RICEVUTA: ${message}</span><br>`;
+            });
+
+            // 3. Avviamo la connessione
+            connection.start()
+                .then(() => {
+                    logDiv.innerHTML += "🟢 Connesso al server SignalR con successo!<br>";
+                    logDiv.innerHTML += `<span style="color: #00ced1; font-weight: bold;">👋 Benvenuto/a ${nomeUtente}! In attesa delle tue scommesse...</span><br>`;
+                })
+                .catch(err => {
+                    logDiv.innerHTML += "🔴 Errore di connessione: " + err + "<br>";
+                    console.error("Dettaglio errore:", err);
+                });
+        }
     </script>
 </body>
 </html>

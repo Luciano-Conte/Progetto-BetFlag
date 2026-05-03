@@ -1,13 +1,12 @@
 ﻿using BetFlag.BackEnd.Scommesse.Data;
 using BetFlag.BackEnd.Scommesse.Interfaces;
 using BetFlag.BackEnd.Scommesse.Models;
-using Microsoft.EntityFrameworkCore.Storage;
-using StackExchange.Redis;
+using Microsoft.EntityFrameworkCore;
 using RabbitMQ.Client;
+using StackExchange.Redis;
+using System.Data;
 using System.Text;
 using System.Text.Json;
-using System.Data;
-using Microsoft.EntityFrameworkCore;
 
 namespace BetFlag.BackEnd.Scommesse.Services
 {
@@ -85,27 +84,28 @@ namespace BetFlag.BackEnd.Scommesse.Services
                 var factory = new ConnectionFactory() { HostName = "queue-rabbitmq" };
                 using var connection = await factory.CreateConnectionAsync();
                 using var channel = await connection.CreateChannelAsync();
-                    // Dichiariamo una coda chiamata "bet_queue"
-                    await channel.QueueDeclareAsync(queue: "bet_queue",
-                        durable: false,
-                        exclusive: false,
-                        autoDelete: false,
-                        arguments: null);
+                // Dichiariamo una coda chiamata "bet_queue"
+                await channel.QueueDeclareAsync(queue: "bet_queue",
+                    durable: false,
+                    exclusive: false,
+                    autoDelete: false,
+                    arguments: null);
 
-                    // Trasformiamo l'oggetto in JSON e poi in Byte (il formato richiesto da RabbitMQ)
-                    var messageJson = JsonSerializer.Serialize(new {
-                        BetId = nuovaScommessa.Id, // passiamo l'ID del DB
-                        UserId = request.UserId,
-                        EventId = request.EventId,
-                        Amount = request.Amount,
-                        Timestamp = DateTime.UtcNow
-                    });
-                    var body = Encoding.UTF8.GetBytes(messageJson);
+                // Trasformiamo l'oggetto in JSON e poi in Byte (il formato richiesto da RabbitMQ)
+                var messageJson = JsonSerializer.Serialize(new
+                {
+                    BetId = nuovaScommessa.Id, // passiamo l'ID del DB
+                    UserId = request.UserId,
+                    EventId = request.EventId,
+                    Amount = request.Amount,
+                    Timestamp = DateTime.UtcNow
+                });
+                var body = Encoding.UTF8.GetBytes(messageJson);
 
-                    // Inviamo il messaggio nella coda
-                    await channel.BasicPublishAsync(exchange: "",
-                        routingKey: "bet_queue",
-                        body: body);
+                // Inviamo il messaggio nella coda
+                await channel.BasicPublishAsync(exchange: "",
+                    routingKey: "bet_queue",
+                    body: body);
             }
             catch (Exception ex)
             {

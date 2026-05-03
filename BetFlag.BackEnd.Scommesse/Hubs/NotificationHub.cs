@@ -2,7 +2,7 @@
 
 namespace BetFlag.BackEnd.Scommesse.Hubs
 {
-    public class NotificationHub: Hub
+    public class NotificationHub : Hub
     {
     }
 }

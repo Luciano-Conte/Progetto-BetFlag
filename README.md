@@ -6,7 +6,7 @@ Questo progetto è una simulazione di un sistema di scommesse distribuito (Backe
 
 Il sistema è composto da diversi container Docker che comunicano tra loro:
 
-1.  **Bet API (.NET 10):** Espone gli endpoint REST per ricevere le scommesse. Aggiorna immediatamente il saldo dell'utente nel database e invia un messaggio alla coda per l'elaborazione asincrona. **Include un Hub SignalR per inviare notifiche push ai client.**
+1.  **Bet API (.NET 10):** Espone gli endpoint REST protetti per ricevere le scommesse. Aggiorna immediatamente il saldo dell'utente nel database e invia un messaggio alla coda per l'elaborazione asincrona. **Include un Hub SignalR sicuro per inviare notifiche push private.**
 2.  **Bet Consumer (Background Worker .NET 10):** Resta in ascolto sulla coda RabbitMQ. Appena arriva un messaggio, lo preleva e simula la validazione/registrazione della scommessa, notificando l'API al termine del processo.
 3.  **RabbitMQ:** Il Message Broker che gestisce la coda (`bet_queue`) disaccoppiando l'API dal Consumer.
 4.  **SQL Server 2022:** Il database relazionale che memorizza gli utenti, i loro saldi e l'intero storico delle scommesse (con i relativi stati Pending/Processed).
@@ -16,17 +16,18 @@ Il sistema è composto da diversi container Docker che comunicano tra loro:
 
 * C# / .NET 10 (ASP.NET Core Web API & Worker Service)
 * Entity Framework Core (SQL Server)
+* Autenticazione JWT (JSON Web Token)
 * RabbitMQ (Message Broker)
 * Docker & Docker Compose
 * Redis OSS
-* SignalR (Real-time WebSockets)
+* SignalR (Real-Time WebSockets)
 
 ## ⚙️ Prerequisiti
 
 Per eseguire questo progetto sul tuo computer locale, devi avere installato:
 * [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
 
-## 🚀 Come avviare il progetto
+## 🚀 Come Avviare il Progetto
 
 1.  Posizionarsi nella cartella principale del progetto (dove è presente il file `docker-compose.yml`).
 2.  Eseguire il comando:
@@ -36,19 +37,23 @@ Per eseguire questo progetto sul tuo computer locale, devi avere installato:
 
 *L'avvio potrebbe richiedere qualche istante la prima volta per scaricare le immagini di SQL Server, RabbitMQ e Redis OSS.*
 
-## 🎮 Come testare il flusso
+## 🎮 Come Testare il Flusso
 
-Una volta che i container sono in esecuzione, puoi testare il sistema:
+Una volta che i container sono in esecuzione, segui questi passaggi per testare il sistema:
 
-**1. Apri il Terminale delle Notifiche:**
-   * Vai all'indirizzo: `http://localhost:8080/index.html` (vedrai il messaggio "In attesa di connessione...").
+**1. Genera il Token JWT:**
+   * Apri il browser su Swagger: `http://localhost:8080/swagger`
+   * Vai sull'endpoint **POST** `/api/auth/login` e inserisci credenziali valide (es. Lucia / Pass123) per ottenere il tuo Token. Copialo (senza le virgolette).
 
-**2. Invia una scommessa tramite Swagger:**
-   * Apri il browser su: `http://localhost:8080/swagger`
-   * Effettua una richiesta **POST** (`/api/bet/place`) con questo payload JSON:
+**2. Apri il Terminale delle Notifiche (Frontend):**
+   * Vai all'indirizzo: `http://localhost:8080/index.html`
+   * Incolla il Token nella casella di testo e clicca "Connetti". Vedrai il messaggio di avvenuta connessione e di benvenuto.
+
+**3. Invia una Scommessa Tramite Swagger:**
+   * Torna su Swagger, clicca in alto su **Authorize** e incolla il token nel campo Value.
+   * Effettua una richiesta **POST** (`/api/bet/place`) con questo payload JSON (l'ID utente verrà estratto automaticamente e in modo sicuro dal token):
      ```json
      {
-       "userId": 1,
        "eventId": 1,
        "sign": "2",
        "amount": 10,
@@ -56,15 +61,15 @@ Una volta che i container sono in esecuzione, puoi testare il sistema:
      }
      ```
 
-**3. Verifica il Risultato:**
-   * **Nel Terminale Notifiche:** Vedrai apparire istantaneamente il messaggio ✅ "Scommessa processata" non appena il Consumer finisce il lavoro.
+**4. Verifica il Risultato:**
+   * **Nel Terminale Notifiche:** Vedrai apparire istantaneamente il messaggio ✅ "Scommessa confermata" non appena il Consumer finisce il lavoro.
    * **Nei Log Docker:** Vedrai l'API che scala il saldo (`UPDATE [Users] SET [Balance]...`) e il Consumer che preleva il messaggio.
 
-**4. Visualizza lo Storico Scommesse:**
-   * Sempre su Swagger, usa l'endpoint **GET** (`/api/bet/history`) per recuperare lo storico, inserendo `1` come `userId`.
-   * Vedrai un array JSON con tutte le giocate dell'utente e il loro stato aggiornato (Processed).
+**5. Visualizza lo Storico Scommesse:**
+   * Sempre su Swagger, usa l'endpoint **GET** (`/api/bet/history`).
+   * Vedrai un array JSON con tutte le giocate dell'utente e il loro stato aggiornato (Pending/Processed).
 
-**5. Spegnimento:**
+**6. Spegnimento:**
    * Per fermare i container: `docker-compose down`
    * Per fermare i container e pulire anche i volumi (reset database): `docker-compose down -v`
 
