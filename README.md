@@ -6,11 +6,12 @@ Questo progetto è una simulazione di un sistema di scommesse distribuito (Backe
 
 Il sistema è composto da diversi container Docker che comunicano tra loro:
 
-1.  **Bet API (.NET 10):** Espone gli endpoint REST protetti per ricevere le scommesse. Aggiorna immediatamente il saldo dell'utente nel database e invia un messaggio alla coda per l'elaborazione asincrona. **Include un Hub SignalR sicuro per inviare notifiche push private.**
-2.  **Bet Consumer (Background Worker .NET 10):** Resta in ascolto sulla coda RabbitMQ. Appena arriva un messaggio, lo preleva e simula la validazione/registrazione della scommessa, notificando l'API al termine del processo.
-3.  **RabbitMQ:** Il Message Broker che gestisce la coda (`bet_queue`) disaccoppiando l'API dal Consumer.
-4.  **SQL Server 2022:** Il database relazionale che memorizza gli utenti, i loro saldi e l'intero storico delle scommesse (con i relativi stati Pending/Processed).
-5.  **Redis:** Cache in memoria dove vengono memorizzate e gestite le quote (odds).
+1.  **Bet API (.NET 10):** Espone gli endpoint REST protetti. Riceve la richiesta di scommessa, la salva in stato *Pending* e invia una richiesta di pagamento alla coda `wallet_requests`. Contiene anche un Hub SignalR per inviare notifiche push in tempo reale all'utente e sincronizza il saldo locale a operazione conclusa.
+2.  **Bet Wallet (Worker .NET 10):** Ascolta la coda `wallet_requests`, verifica se l'utente ha saldo sufficiente nel proprio database dedicato, scala i fondi e pubblica l'esito (Successo/Fallimento) sulla coda delle risposte `bet_responses`.
+3.  **Bet Consumer (Worker .NET 10):** Resta in ascolto sulla coda `bet_responses`. Preleva l'esito dal Wallet e chiama l'endpoint di conferma dell'API per far passare la scommessa in stato *Processed* o *Rejected*.
+4.  **RabbitMQ:** Il Message Broker che gestisce le code (`wallet_requests` e `bet_responses`), garantendo la resilienza e il disaccoppiamento tra API, Wallet e Consumer.
+5.  **SQL Server 2022:** Ospita due database separati: `BetFlagDb` (per lo storico scommesse e copia locale utenti dell'API) e `BetFlagWalletDb` (dove sono presenti i saldi reali degli utenti).
+6.  **Redis:** Cache in memoria dove vengono memorizzate e gestite le quote (odds).
 
 ## 🛠️ Tecnologie Utilizzate
 
@@ -29,8 +30,9 @@ Per eseguire questo progetto sul tuo computer locale, devi avere installato:
 
 ## 🚀 Come Avviare il Progetto
 
-1.  Posizionarsi nella cartella principale del progetto (dove è presente il file `docker-compose.yml`).
-2.  Eseguire il comando:
+1.  Avviare Docker Desktop.
+2.  Tramite un terminale (Windows PowerShell o CMD), posizionarsi nella cartella principale del progetto (dove è presente il file `docker-compose.yml`).
+3.  Eseguire il comando:
     ```bash
     docker-compose up --build
     ```
@@ -47,7 +49,7 @@ Una volta che i container sono in esecuzione, segui questi passaggi per testare 
 
 **2. Apri il Terminale delle Notifiche (Frontend):**
    * Vai all'indirizzo: `http://localhost:8080/index.html`
-   * Incolla il Token nella casella di testo e clicca "Connetti". Vedrai il messaggio di avvenuta connessione e di benvenuto.
+   * Incolla il Token nella casella di testo e clicca "Connetti". Vedrai il messaggio di avvenuta connessione e di benvenuto, con il saldo dell'utente.
 
 **3. Invia una Scommessa Tramite Swagger:**
    * Torna su Swagger, clicca in alto su **Authorize** e incolla il token nel campo Value.
@@ -60,18 +62,27 @@ Una volta che i container sono in esecuzione, segui questi passaggi per testare 
        "odds": 2.50
      }
      ```
+   * *Se si prova a inserire un importo superiore al saldo dell'utente (es. 1000€) la scommessa viene rifiutata (Rejected).*
 
 **4. Verifica il Risultato:**
-   * **Nel Terminale Notifiche:** Vedrai apparire istantaneamente il messaggio ✅ "Scommessa confermata" non appena il Consumer finisce il lavoro.
-   * **Nei Log Docker:** Vedrai l'API che scala il saldo (`UPDATE [Users] SET [Balance]...`) e il Consumer che preleva il messaggio.
+   * **Nel Terminale Notifiche:** Vedrai apparire istantaneamente "✅ Scommessa confermata! ID: 1. Il tuo nuovo saldo è di: 90.00€" oppure "❌ Scommessa rifiutata: Saldo insufficiente".
+   * **Nei Log Docker:** Vedrai il Wallet elaborare la transazione e il Consumer notificare l'API.
 
 **5. Visualizza lo Storico Scommesse:**
    * Sempre su Swagger, usa l'endpoint **GET** (`/api/bet/history`).
-   * Vedrai un array JSON con tutte le giocate dell'utente e il loro stato aggiornato (Pending/Processed).
+   * Vedrai un array JSON con tutte le giocate dell'utente e il loro stato aggiornato (*Pending*, *Processed*, *Rejected*).
 
 **6. Spegnimento:**
    * Per fermare i container: `docker-compose down`
    * Per fermare i container e pulire anche i volumi (reset database): `docker-compose down -v`
+
+## 🔍 Monitoraggio e Log (Terminale)
+
+Per controllare cosa succede nei diversi container Docker e vedere la comunicazione tra i microservizi, puoi aprire un nuovo terminale ed eseguire questi comandi (aggiungi -f per seguirli in tempo reale):
+
+* **Log dell'API:** `docker-compose logs -f bet-api`
+* **Log del Wallet:** `docker-compose logs -f bet-wallet` (Utile per vedere i pagamenti o i rifiuti per saldo insufficiente).
+* **Log del Consumer:** `docker-compose logs -f bet-consumer` (Vedi i messaggi ricevuti da RabbitMQ e l'invio all'API).
 
 ## 📊 Dashboard e Interfacce
 

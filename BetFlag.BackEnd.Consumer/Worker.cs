@@ -1,146 +1,105 @@
 using RabbitMQ.Client;
+using BetFlag.BackEnd.Consumer.Models;
 using RabbitMQ.Client.Events;
 using System.Text;
 using System.Text.Json;
+using System.Net.Http;
 
-namespace BetFlag.BackEnd.Consumer;
-
-public class Worker : BackgroundService
+namespace BetFlag.BackEnd.Consumer
 {
-    private readonly ILogger<Worker> _logger;
-    private IConnection? _connection;
-    private IChannel? _channel;
-
-    public Worker(ILogger<Worker> logger)
+    public class Worker : BackgroundService
     {
-        _logger = logger;
-    }
+        private readonly ILogger<Worker> _logger;
+        private readonly IConfiguration _config;
+        private readonly IHttpClientFactory _httpClientFactory;
+        private const string QueueName = "bet_responses";
 
-    // Questo metodo si avvia da solo all'accensione del microservizio
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        // 1. CICLO DI CONNESSIONE
-        while (!stoppingToken.IsCancellationRequested && _connection == null)
+        public Worker(ILogger<Worker> logger, IConfiguration config, IHttpClientFactory httpClientFactory)
         {
-            try
-            {
-                // Creiamo la connessione asincrona
-                _logger.LogInformation("🔄 Tentativo di connessione a RabbitMQ...");
-                var factory = new ConnectionFactory()
-                {
-                    HostName = "queue-rabbitmq",
-                };
-
-                // IMPORTANTE: Assegna alla variabile di classe _connection
-                _connection = await factory.CreateConnectionAsync(stoppingToken);
-                // IMPORTANTE: Crea il canale subito dopo la connessione
-                _channel = await _connection.CreateChannelAsync(cancellationToken: stoppingToken);
-            }
-            catch (Exception)
-            {
-                _logger.LogWarning("⚠️ RabbitMQ non è ancora pronto o errore di rete. Riprovo tra 5 secondi...");
-                await Task.Delay(5000, stoppingToken);
-            }
+            _logger = logger;
+            _config = config;
+            _httpClientFactory = httpClientFactory;
         }
 
-        if (_channel == null) return;
-
-        // 2. CONFIGURAZIONE CODA
-        // Dichiariamo la coda (se non esiste, la crea. Se esiste, si aggancia)
-        await _channel.QueueDeclareAsync(queue: "bet_queue",
-            durable: false,
-            exclusive: false,
-            autoDelete: false,
-            arguments: null,
-            cancellationToken: stoppingToken);
-
-        _logger.LogInformation("✅ Connesso! In attesa di nuove scommesse...");
-
-        // 3. CONFIGURAZIONE CONSUMER
-        // Creiamo il "Consumer" (il lettore) asincrono
-        var consumer = new AsyncEventingBasicConsumer(_channel);
-
-        // Cosa fare quando arriva un messaggio?
-        consumer.ReceivedAsync += async (model, ea) =>
+        // Questo metodo si avvia da solo all'accensione del microservizio
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            var body = ea.Body.ToArray();
-            var message = System.Text.Encoding.UTF8.GetString(body);
+            var factory = new ConnectionFactory() { HostName = "queue-rabbitmq" };
+            IConnection? connection = null;
 
-            _logger.LogInformation($"[📥] NUOVA SCOMMESSA RICEVUTA: {message}");
-
-            // Estrazione BetId
-            int betId = 0;
-            try
+            // --- FIX: Retry logic per RabbitMQ ---
+            while (connection == null && !stoppingToken.IsCancellationRequested)
             {
-                // Leggiamo l'ID dal JSON che arriva dall'API
-                var data = JsonSerializer.Deserialize<JsonElement>(message);
-                betId = data.GetProperty("BetId").GetInt32();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"❌ Errore durante la lettura del BetId: {ex.Message}");
-            }
-
-            // Simuliamo il tempo necessario per e validare la scommessa..
-            await Task.Delay(2000, stoppingToken); // 2 secondi
-            _logger.LogInformation($"[✅] Scommessa #{betId} elaborata!\n");
-
-            // Avvisiamo l'API che abbiamo finito
-            try
-            {
-                using var httpClient = new HttpClient();
-                // Nota: "bet-api" è il nome del container nel docker-compose
-
-                // Creiamo il payload che l'API si aspetta (BetConfirmRequest)
-                var confirmPayload = new { BetId = betId };
-
-                // Lo trasformiamo in JSON in modo sicuro
-                var json = System.Text.Json.JsonSerializer.Serialize(confirmPayload);
-                var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-
-                _logger.LogInformation($"🚀 Invio conferma per Scommessa #{betId} all'API...");
-
-                var response = await httpClient.PostAsync("http://bet-api:8080/api/bet/confirm", content);
-
-                if (response.IsSuccessStatusCode)
+                try
                 {
-                    _logger.LogInformation($"✅ Scommessa #{betId} confermata con successo sul DB!");
+                    _logger.LogInformation("Tentativo di connessione a RabbitMQ...");
+                    connection = await factory.CreateConnectionAsync();
+                    _logger.LogInformation("✅ Connesso a RabbitMQ con successo!");
                 }
-                else
+                catch (Exception ex)
                 {
-                    _logger.LogError($"❌ L'API ha risposto con errore: {response.StatusCode}");
+                    _logger.LogWarning($"RabbitMQ non ancora pronto. Riprovo tra 5 secondi... Dettaglio: {ex.Message}");
+                    await Task.Delay(5000, stoppingToken); // Aspetta 5 secondi prima di riprovare
                 }
             }
-            catch (Exception ex)
+
+            if (connection == null) return; // Se il token è stato cancellato durante l'attesa, usciamo
+            // --- FINE FIX ---
+
+            using var channel = await connection.CreateChannelAsync();
+
+            await channel.QueueDeclareAsync(queue: QueueName,
+                durable: false,
+                exclusive: false,
+                autoDelete: false,
+                arguments: null);
+
+            var consumer = new AsyncEventingBasicConsumer(channel);
+            consumer.ReceivedAsync += async (model, ea) =>
             {
+                var body = ea.Body.ToArray();
+                var message = Encoding.UTF8.GetString(body);
+                _logger.LogInformation(" [x] Risposta ricevuta dal Wallet: {0}", message);
 
-                _logger.LogError($"❌ Errore di rete durante l'invio notifica: {ex.Message}");
+                try
+                {
+                    // Deserializziamo la risposta del Wallet
+                    var walletResponse = JsonSerializer.Deserialize<WalletResponse>(message);
+
+                    if (walletResponse != null)
+                    {
+                        // Comunichiamo l'esito all'API Scommesse
+                        await ConfirmBetToApi(walletResponse);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError($"Errore processamento messaggio: {ex.Message}");
+                }
+            };
+
+            await channel.BasicConsumeAsync(QueueName, autoAck: true, consumer: consumer);
+            await Task.Delay(-1, stoppingToken); // Mantiene il worker in esecuzione
+        }
+
+        private async Task ConfirmBetToApi(WalletResponse response)
+        {
+            var client = _httpClientFactory.CreateClient();
+            // L'API scommesse deve sapere se mettere "Processed" o "Rejected"
+            var content = new StringContent(JsonSerializer.Serialize(response), Encoding.UTF8, "application/json");
+
+            // Chiamiamo l'endpoint di conferma dell'API Scommesse
+            var apiUrl = "http://bet-api:8080/api/bet/confirm";
+            var result = await client.PostAsync(apiUrl, content);
+
+            if (result.IsSuccessStatusCode)
+            {
+                _logger.LogInformation($"Scommessa {response.BetId} gestita con successo (Stato: {response.Success})");
             }
-        };
-
-        // Diciamo al canale di iniziare ad ascoltare usando il nostro consumer
-        await _channel.BasicConsumeAsync(queue: "bet_queue",
-            autoAck: true,
-            consumer: consumer,
-            cancellationToken: stoppingToken);
-
-        // 4. ATTESA INFINITA (Mantiene il servizio attivo)
-        try
-        {
-            await Task.Delay(Timeout.Infinite, stoppingToken);
+            else
+            {
+                _logger.LogError($"Errore nel callback all'API per la scommessa {response.BetId}");
+            }
         }
-        catch (OperationCanceledException)
-        {
-            _logger.LogInformation("Servizio in arresto...");
-        }
-    }
-
-    // Pulizia quando spegniamo il container
-    public override async Task StopAsync(CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("Chiusura connessioni RabbitMQ...");
-        if (_channel != null) await _channel.CloseAsync(cancellationToken);
-        if (_connection != null) await _connection.CloseAsync(cancellationToken);
-        await base.StopAsync(cancellationToken);
     }
 }

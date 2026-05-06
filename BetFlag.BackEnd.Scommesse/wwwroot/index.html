@@ -118,7 +118,29 @@
             connection.start()
                 .then(() => {
                     logDiv.innerHTML += "🟢 Connesso al server SignalR con successo!<br>";
-                    logDiv.innerHTML += `<span style="color: #00ced1; font-weight: bold;">👋 Benvenuto/a ${nomeUtente}! In attesa delle tue scommesse...</span><br>`;
+
+                    // Chiediamo all'API il saldo aggiornato dell'utente
+                    fetch("http://localhost:8080/api/bet/balance", {
+                        method: "GET",
+                        headers: {
+                            "Authorization": "Bearer " + token,
+                            "Content-Type": "application/json"
+                        }
+                    })
+                        .then(response => {
+                            if (!response.ok) throw new Error("Impossibile recuperare il saldo");
+                            return response.json();
+                        })
+                        .then(data => {
+                            // Formattiamo il saldo a 2 cifre decimali
+                            const saldoAttuale = data.balance.toFixed(2);
+                            logDiv.innerHTML += `<span style="color: #00ced1; font-weight: bold;">👋 Benvenuto/a ${nomeUtente}! Il tuo saldo attuale è di ${saldoAttuale}€. In attesa delle tue scommesse...</span><br>`;
+                        })
+                        .catch(err => {
+                            // Fallback nel caso la chiamata API fallisca: mostriamo il benvenuto senza saldo
+                            logDiv.innerHTML += `<span style="color: #00ced1; font-weight: bold;">👋 Benvenuto/a ${nomeUtente}! In attesa delle tue scommesse...</span><br>`;
+                            console.error("Errore lettura saldo:", err);
+                        });
                 })
                 .catch(err => {
                     logDiv.innerHTML += "🔴 Errore di connessione: " + err + "<br>";

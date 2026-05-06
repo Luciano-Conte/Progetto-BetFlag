@@ -49,18 +49,7 @@ namespace BetFlag.BackEnd.Scommesse.Services
                 return false; // "Quota cambiata, accetta il nuovo valore?"
             }
 
-            // --- STEP 2: VERIFICA SALDO SU SQL SERVER ---
-            var user = await _context.Users.FindAsync(request.UserId);
-            if (user == null || user.Balance < request.Amount)
-            {
-                return false; // Utente non trovato o saldo insufficiente
-            }
-
-            // --- STEP 3: TRANSAZIONE ---
-            // Logica di sottrazione saldo (Transazionale ACID)
-            user.Balance -= request.Amount;
-
-            // Creazione record scomessa
+            // --- STEP 2: SALVATAGGIO SCOMMESSA ---
             var nuovaScommessa = new Bets
             {
                 UserId = request.UserId,
@@ -69,52 +58,46 @@ namespace BetFlag.BackEnd.Scommesse.Services
                 Amount = request.Amount,
                 Odds = request.Odds,
                 CreatedAt = DateTime.UtcNow,
-                Status = "Pending" // Inizialmente è in attesa
+                Status = "Pending" // Rimane in attesa finché il Wallet non dice "OK"
             };
 
             _context.Bets.Add(nuovaScommessa);
-
-            // Questo salva sia il nuovo saldo che la nuova scommessa su SQL Server
             await _context.SaveChangesAsync();
 
-            // --- STEP 4: PUBBLICA IL MESSAGGIO SU RABBITMQ ---
+            // --- STEP 3: CHIEDIAMO AL WALLET DI SCALARE I SOLDI ---
             try
             {
-                // Ci connettiamo al container RabbitMQ (il nome è quello nel docker-compose)
                 var factory = new ConnectionFactory() { HostName = "queue-rabbitmq" };
                 using var connection = await factory.CreateConnectionAsync();
                 using var channel = await connection.CreateChannelAsync();
-                // Dichiariamo una coda chiamata "bet_queue"
-                await channel.QueueDeclareAsync(queue: "bet_queue",
+
+                await channel.QueueDeclareAsync(queue: "wallet_requests",
                     durable: false,
                     exclusive: false,
                     autoDelete: false,
                     arguments: null);
 
-                // Trasformiamo l'oggetto in JSON e poi in Byte (il formato richiesto da RabbitMQ)
-                var messageJson = JsonSerializer.Serialize(new
+                // Creiamo il payload esatto che il WalletWorker si aspetta di leggere
+                var walletRequest = new
                 {
-                    BetId = nuovaScommessa.Id, // passiamo l'ID del DB
+                    BetId = nuovaScommessa.Id,
                     UserId = request.UserId,
-                    EventId = request.EventId,
-                    Amount = request.Amount,
-                    Timestamp = DateTime.UtcNow
-                });
-                var body = Encoding.UTF8.GetBytes(messageJson);
+                    Amount = request.Amount
+                };
 
-                // Inviamo il messaggio nella coda
-                await channel.BasicPublishAsync(exchange: "",
-                    routingKey: "bet_queue",
+                var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(walletRequest));
+
+                await channel.BasicPublishAsync(
+                    exchange: "",
+                    routingKey: "wallet_requests",
                     body: body);
             }
             catch (Exception ex)
             {
-                // Se RabbitMQ cade, la scommessa è comunque valida (i soldi sono stati presi).
-                // In un sistema reale, qui salveremmo l'errore in un log di emergenza.
-                Console.WriteLine($"[ATTENZIONE] Errore invio a RabbitMQ: {ex.Message}");
+                Console.WriteLine($"[ATTENZIONE] Errore invio richiesta al Wallet: {ex.Message}");
             }
 
-            return true;
+            return true; // Diciamo all'utente "Scommessa presa in carico!"
         }
     }
 }

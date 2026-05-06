@@ -1,0 +1,6 @@
+@BetFlag.BackEnd.Wallet_HostAddress = http://localhost:5189
+
+GET {{BetFlag.BackEnd.Wallet_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

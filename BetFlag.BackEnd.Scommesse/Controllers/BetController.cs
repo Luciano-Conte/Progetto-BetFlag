@@ -51,23 +51,43 @@ namespace BetFlag.BackEnd.Scommesse.Controllers
 
         [AllowAnonymous] // <-- Permette al Worker di confermare senza Token
         [HttpPost("confirm")] // Il Worker chiama questo endpoint
-        public async Task<IActionResult> ConfirmBet([FromBody] BetConfirmRequest confirmation)
+        public async Task<IActionResult> ConfirmBet([FromBody] WalletResponse response)
         {
             // 1. Cerchiamo la scommessa nel database tramite l'ID ricevuto dal Worker
-            var scommessa = await _context.Bets.FindAsync(confirmation.BetId);
+            var scommessa = await _context.Bets.FindAsync(response.BetId);
+            if (scommessa == null) return NotFound();
 
-            if (scommessa != null)
+            var user = await _context.Users.FindAsync(scommessa.UserId);
+            decimal saldo = 0;
+
+            // 2. Se il wallet ha avuto successo->Processed, altrimenti -> Rejected
+            if (response.Success)
             {
-                // 2. Aggiorniamo lo stato
                 scommessa.Status = "Processed";
-                await _context.SaveChangesAsync();
 
-                // 3. Notifica SignalR: inviamo il messaggio a un utente specifico
-                await _hubContext.Clients.User(scommessa.UserId.ToString()).SendAsync("ReceiveBetNotification",
-                    $"✅ Scommessa {scommessa.Id} confermata!");
-                return Ok();
+                // Aggiornamento saldo locale (tabella Users)
+                if (user != null)
+                {
+                    user.Balance -= scommessa.Amount;
+                    saldo = user.Balance;
+                }
             }
-            return NotFound();
+            else
+            {
+                scommessa.Status = "Rejected";
+            }
+
+            await _context.SaveChangesAsync();
+
+            // 3. Notifica SignalR all'utente
+            string alertMessage = response.Success
+                ? $"✅ Scommessa confermata! ID: {scommessa.Id}. Il tuo nuovo saldo è di: {saldo}€"
+                : $"❌ Scommessa rifiutata: {response.Message}";
+
+            await _hubContext.Clients.User(scommessa.UserId.ToString())
+                .SendAsync("ReceiveBetNotification", alertMessage);
+
+            return Ok();
         }
 
         [HttpGet("history")]
@@ -81,6 +101,21 @@ namespace BetFlag.BackEnd.Scommesse.Controllers
                 return NotFound(new { message = "Nessuna scommessa trovata nel tuo storico." });
             }
             return Ok(history);
+        }
+
+        [HttpGet("balance")]
+        public async Task<IActionResult> GetBalance()
+        {
+            // Usiamo l'ID estratto dal token
+            var user = await _context.Users.FindAsync(CurrentUserId);
+
+            if (user == null)
+            {
+                return NotFound(new { message = "Utente non trovato" });
+            }
+
+            // Restituiamo solo il saldo in formato JSON
+            return Ok(new { balance = user.Balance });
         }
     }
 }

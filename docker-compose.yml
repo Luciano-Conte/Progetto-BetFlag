@@ -26,7 +26,23 @@ services:
       - "5672:5672"               # Porta per i messaggi
       - "15672:15672"             # Porta per la dashboard (user: guest, pass: guest)
 
-  # --- LA MIA API .NET ---
+  # --- MICROSERVIZIO WALLET ---
+  bet-wallet:
+    build:
+      context: .
+      dockerfile: BetFlag.BackEnd.Wallet/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      # Nota: Puntiamo a un database dedicato "BetFlagWalletDb"
+      - ConnectionStrings__DefaultConnection=Server=db-sql;Database=BetFlagWalletDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=true
+      - RabbitMQ__HostName=queue-rabbitmq
+    depends_on:
+      db-sql:
+        condition: service_started
+      queue-rabbitmq:
+        condition: service_healthy
+
+  # --- API SCOMMESSE ---
   bet-api:
     build:
       context: .                  # Cerca i file nella cartella corrente
@@ -43,11 +59,17 @@ services:
       - cache-redis
       - queue-rabbitmq
        
-  # --- IL MICROSERVIZIO CONSUMER ---
+  # --- MICROSERVIZIO CONSUMER ---
   bet-consumer:
     build:
-      context: ./BetFlag.BackEnd.Consumer # Guarda dentro la cartella BetFlag.BackEnd.Consumer
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: BetFlag.BackEnd.Consumer/Dockerfile
+    restart: on-failure
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - RabbitMQ__HostName=queue-rabbitmq
     depends_on:                           # Deve partire DOPO che RabbitMQ è acceso
       queue-rabbitmq:
         condition: service_healthy
+      bet-api:
+        condition: service_started
