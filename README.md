@@ -1,6 +1,6 @@
 # 🚀 BetFlag Microservices Architecture
 
-Questo progetto è una simulazione di un sistema di scommesse distribuito (Backend) costruito con un'architettura a microservizi. Dimostra come gestire operazioni sincrone (API) e asincrone (Background Worker) utilizzando **.NET 10**, **RabbitMQ**, **Redis**, **Docker** e **SignalR**.
+Questo progetto è una simulazione di un sistema di scommesse distribuito (Backend) costruito con un'architettura a microservizi. Dimostra come gestire operazioni sincrone (API) e asincrone (Background Worker) utilizzando **.NET 10**, **SQL Server**, **RabbitMQ**, **Redis**, **Docker** e **SignalR**.
 
 ## 🏗️ Architettura del Sistema
 
@@ -22,6 +22,14 @@ Il sistema è composto da diversi container Docker che comunicano tra loro:
 * Docker & Docker Compose
 * Redis OSS
 * SignalR (Real-Time WebSockets)
+
+## 🛡️ Resilienza e Pattern Avanzati
+
+Per garantire la massima affidabilità in un contesto finanziario (Betting), il sistema implementa pattern avanzati per la gestione dei fallimenti di rete:
+
+**Idempotenza Distribuita:** In un sistema a microservizi, un messaggio può essere consegnato più di una volta a causa di retry di rete.
+  * **Problema:** Senza protezione, un utente potrebbe vedersi addebitare la stessa scommessa due volte se il messaggio RabbitMQ viene duplicato.
+  * **Soluzione:** Sia il **Bet Wallet** che la **Bet API** implementano il controllo dell'idempotenza tramite la tabella `ProcessedTransactions`. Ogni operazione viene registrata con il suo `BetId` univoco; se un messaggio duplicato arriva, il sistema lo riconosce, non ripete l'addebito e restituisce l'esito positivo della transazione già avvenuta.
 
 ## ⚙️ Prerequisiti
 
@@ -76,9 +84,25 @@ Una volta che i container sono in esecuzione, segui questi passaggi per testare 
    * Per fermare i container: `docker-compose down`
    * Per fermare i container e pulire anche i volumi (reset database): `docker-compose down -v`
 
+## 🧪 Test di Resilienza (Stress Test Idempotenza)
+
+Per verificare che il sistema gestisca correttamente i messaggi duplicati (evitando doppi addebiti), puoi simulare un errore di rete forzando un messaggio manuale su RabbitMQ:
+
+1. **Esegui una scommessa normale** tramite Swagger.
+2. **Accedi a RabbitMQ Management**: `http://localhost:15672` (user: `guest` / pass: `guest`).
+3. Vai nella sezione **Queues and Streams** e seleziona la coda `wallet_requests`.
+4. Scorri fino a **Publish message** e inserisci nel campo Payload:
+   ```json
+   { "BetId": 1, "Amount": 10.0 }
+   ```
+5. **Osserva i Log:**
+   * Nel log di **bet-wallet**, vedrai: `🛡️ TRANSAZIONE IDEMPOTENTE: BetId 1 già processato. Ignoro l'addebito...`
+   * Nel log di **bet-api**, vedrai: `🛡️ Messaggio duplicato ignorato per BetId: 1.`
+   * Il saldo dell'utente rimarrà invariato, confermando che la protezione ha funzionato.
+
 ## 🔍 Monitoraggio e Log (Terminale)
 
-Per controllare cosa succede nei diversi container Docker e vedere la comunicazione tra i microservizi, puoi aprire un nuovo terminale ed eseguire questi comandi (aggiungi -f per seguirli in tempo reale):
+Per controllare cosa succede nei diversi container Docker e vedere la comunicazione tra i microservizi, puoi aprire un nuovo terminale ed eseguire questi comandi (aggiungi `-f` per seguirli in tempo reale):
 
 * **Log dell'API:** `docker-compose logs -f bet-api`
 * **Log del Wallet:** `docker-compose logs -f bet-wallet` (Utile per vedere i pagamenti o i rifiuti per saldo insufficiente).

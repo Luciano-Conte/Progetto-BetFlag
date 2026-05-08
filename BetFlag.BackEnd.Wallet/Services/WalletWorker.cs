@@ -69,6 +69,26 @@ namespace BetFlag.BackEnd.Wallet.Services
                     using (var scope = _scopeFactory.CreateScope())
                     {
                         var dbContext = scope.ServiceProvider.GetRequiredService<WalletDbContext>();
+
+                        // ================================================================
+                        // 1. 🛡️ CONTROLLO IDEMPOTENZA: Abbiamo già processato questo BetId?
+                        // ================================================================
+                        bool alreadyProcessed = dbContext.ProcessedTransactions.Any(pt => pt.BetId == paymentRequest.BetId);
+                        if (alreadyProcessed)
+                        {
+                            Console.WriteLine($"[WALLET WORKER] 🛡️ TRANSAZIONE IDEMPOTENTE: BetId {paymentRequest.BetId} già processato. Ignoro l'addebito ma confermo il successo.");
+
+                            // Rispondiamo comunque OK all'API per chiudere il cerchio nel caso il messaggio di risposta originale si fosse perso
+                            var idempotentResponse = new { BetId = paymentRequest.BetId, Success = true, Status = "Processed", Message = "Pagamento già completato in precedenza" };
+                            var idempotentBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(idempotentResponse));
+
+                            await _channel.BasicPublishAsync(string.Empty, "bet_responses", idempotentBytes, stoppingToken);
+                            return; // Usciamo per non scalare i soldi altre volte!
+                        }
+
+                        // ================================================================
+                        // 2. ELABORAZIONE NORMALE
+                        // ================================================================
                         var wallet = dbContext.Wallets.FirstOrDefault(w => w.Username == "Lucia");
 
                         bool isSuccess = false;
@@ -77,8 +97,17 @@ namespace BetFlag.BackEnd.Wallet.Services
 
                         if (wallet != null && wallet.Balance >= paymentRequest.Amount)
                         {
+                            // Scala i soldi
                             wallet.Balance -= paymentRequest.Amount;
-                            await dbContext.SaveChangesAsync(stoppingToken);
+
+                            // Registra la transazione come completata nella stessa operazione di salvataggio
+                            dbContext.ProcessedTransactions.Add(new ProcessedTransaction
+                            {
+                                BetId = paymentRequest.BetId,
+                                ProcessedAt = DateTime.UtcNow
+                            });
+
+                            await dbContext.SaveChangesAsync(stoppingToken); // <-- Transazione atomica!
 
                             isSuccess = true;
                             status = "Processed";
@@ -90,6 +119,7 @@ namespace BetFlag.BackEnd.Wallet.Services
                             Console.WriteLine($"[WALLET WORKER] ❌ Saldo insufficiente o utente non trovato per BetId: {paymentRequest.BetId}");
                         }
 
+                        // --- INVIA RISPOSTA ---
                         var response = new
                         {
                             BetId = paymentRequest.BetId,

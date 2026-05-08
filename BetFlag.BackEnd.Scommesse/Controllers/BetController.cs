@@ -58,9 +58,24 @@ namespace BetFlag.BackEnd.Scommesse.Controllers
             if (scommessa == null) return NotFound();
 
             var user = await _context.Users.FindAsync(scommessa.UserId);
-            decimal saldo = 0;
+            decimal saldo = user != null ? user.Balance : 0;
 
             // 2. Se il wallet ha avuto successo->Processed, altrimenti -> Rejected
+
+            // ================================================================
+            // 🛡️ CONTROLLO IDEMPOTENZA
+            // ================================================================
+            if (scommessa.Status == "Processed")
+            {
+                // Se la scommessa è GIÀ "Processed", significa che abbiamo già scalato il saldo locale in passato.
+                // Ignoriamo la richiesta per evitare di scalare i soldi più volte.
+                Console.WriteLine($"[API] 🛡️ Messaggio duplicato ignorato per BetId: {response.BetId}");
+                return Ok(new { message = "🛡️ Scommessa già processata in precedenza." });
+            }
+
+            // ================================================================
+            // ELABORAZIONE NORMALE
+            // ================================================================
             if (response.Success)
             {
                 scommessa.Status = "Processed";

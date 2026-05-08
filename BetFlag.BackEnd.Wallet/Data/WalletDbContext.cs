@@ -7,6 +7,7 @@ namespace BetFlag.BackEnd.Wallet.Data
     {
         public WalletDbContext(DbContextOptions<WalletDbContext> options) : base(options) { }
         public DbSet<UserWallet> Wallets => Set<UserWallet>();
+        public DbSet<ProcessedTransaction> ProcessedTransactions => Set<ProcessedTransaction>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
